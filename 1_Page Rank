@@ -1,0 +1,16 @@
+import networkx as nx
+import numpy as np
+seed =42
+G = nx.scale_free_graph(32,seed = seed)
+pagerank_scores = nx.pagerank(G, alpha=0.85, tol=1e-100, max_iter=10**10)
+ranked_nodes = sorted(pagerank_scores.items(), key=lambda item: item[1], reverse=True)
+
+# Write rank order, node ID, and score side-by-side into a text file
+with open("pagerank_results_scalefree_32.txt", "w") as f:
+    f.write(f"{'Rank':<6}{'Node':<8}{'Score'}\n")
+    f.write("\n")
+    for rank, (node, score) in enumerate(ranked_nodes, start=1):
+        f.write(f"{rank:<6}{node:<8}{score:.6f}\n")
+        
+        
+        
