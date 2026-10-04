@@ -1,0 +1,113 @@
+import matplotlib.pyplot as plt
+import networkx as nx
+import numpy as np
+from qiskit.circuit.library import RealAmplitudes
+from qiskit.quantum_info import Operator, SparsePauliOp, Statevector
+from scipy.optimize import minimize
+
+N_QUBITS = 4
+N_NODES = 16
+seed = 42
+G = nx.scale_free_graph(16, seed=seed)
+A = nx.to_numpy_array(G, weight=None)
+
+# Normalize adjacency matrix
+degrees = A.sum(axis=1, keepdims=True)
+P = np.divide(A, degrees, out=np.zeros_like(A, dtype=float), where=degrees != 0)
+
+# Construct Google Matrix 
+alpha = 0.85
+Google_Matrix = alpha * P + ((1 - alpha) / N_NODES) * np.ones((N_NODES, N_NODES))
+A = np.eye(N_NODES) - Google_Matrix.T
+H = A.T.conj() @ A
+H_op = SparsePauliOp.from_operator(Operator(H))
+
+ansatz = RealAmplitudes(num_qubits=N_QUBITS, entanglement="linear", reps=4)
+
+# Tracking & Optimization
+cost_history = [] 
+def cost_function(params):  # input : parameters, output : Expectation values
+    parm_anzatz = ansatz.assign_parameters(params)
+    output_state = Statevector(parm_anzatz)
+    cost = float(output_state.expectation_value(H_op))
+    cost_history.append(cost)
+    return cost
+
+# Initialize parameters
+np.random.seed(42)
+initial_params = np.random.uniform(0, 2 * np.pi, ansatz.num_parameters)
+
+# Scipy optimization
+options = {
+    'gtol': 1e-25,      # Stop when projected gradient norm <= 1e-15
+    'ftol': 1e-30,      # Stop when relative change in function value <= 1e-25
+    'maxiter': 5*10**7, # Max optimization steps (iterations)
+    'maxfun': 5*10**7   # Max total cost_function calls
+}
+
+result = minimize(
+    cost_function,
+    initial_params,
+    method="L-BFGS-B",
+    options=options
+)
+
+# Identify which specific criterion stopped the optimizer
+message_str = str(result.message).upper()
+
+if result.nit >= options['maxiter']:
+    stopping_reason = f"maxiter reached ({result.nit} / {options['maxiter']} iterations)"
+elif result.nfev >= options['maxfun']:
+    stopping_reason = f"maxfun reached ({result.nfev} / {options['maxfun']} evaluations)"
+elif "NORM OF PROJECTED GRADIENT" in message_str or "PGTOL" in message_str:
+    stopping_reason = f"gtol reached (projected gradient norm <= {options['gtol']})"
+elif "REL_REDUX_OF_F" in message_str or "FACTR" in message_str:
+    stopping_reason = f"ftol reached (relative function change <= {options['ftol']})"
+else:
+    stopping_reason = f"Other SciPy signal: {result.message}"
+
+# Results
+opt_circuit = ansatz.assign_parameters(result.x)
+opt_state = Statevector(opt_circuit)
+
+# Extract probabilities of all basis states
+all_probabilities = opt_state.probabilities()
+
+# Extract and normalize probabilities for valid nodes 
+node_probabilities = all_probabilities[:N_NODES]
+node_probabilities /= np.sum(node_probabilities)
+
+# Create ranked tuple list (node_id, score) sorted by score descending
+ranked_nodes = sorted(
+    enumerate(node_probabilities), key=lambda item: item[1], reverse=True
+)
+
+# Write optimization details, rank order, node ID, and score into text file
+with open("VQE_max_L_BFGS_B_16.txt", "w") as f:
+    f.write(f"Triggered Criterion: {stopping_reason}\n")
+    f.write(f"SciPy Message:       {result.message}\n")
+    f.write(f"Final Cost Value:    {result.fun:.10e}\n")
+    f.write(f"Iterations (nit):    {result.nit}\n")
+    f.write(f"Evaluations (nfev):  {result.nfev}\n")
+    f.write("=" * 50 + "\n\n")
+    f.write(f"{'Rank':<6}{'Node':<8}{'Score'}\n")
+    f.write("\n")
+    for rank, (node, score) in enumerate(ranked_nodes, start=1):
+        f.write(f"{rank:<6}{node:<8}{score:.6f}\n")
+
+# Plot Cost vs Function Evaluations
+plt.figure(figsize=(8, 5))
+plt.plot(cost_history, color="red", linewidth=2, label="Cost Value")
+plt.axhline(
+    y=0.0, color="black", linestyle="--", alpha=0.7, label="Ground state"
+)
+plt.title("Cost vs Function Evaluations (VQE_max_L_BFGS_B_16)")
+plt.xlabel("Function Evaluation Step")
+plt.ylabel("Expectation Value (Cost)")
+plt.legend()
+plt.grid(True, linestyle="--", alpha=0.6)
+plt.tight_layout()
+
+# Save plot to file and show
+plt.savefig("VQE_max_16.png")
+plt.show()
